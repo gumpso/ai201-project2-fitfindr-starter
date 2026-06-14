@@ -103,12 +103,20 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
     query_lower = raw_query.lower()
 
-    price_match = re.search(
-        r"(?:under|below|less than|max(?:imum)?(?: price)?)[^\d]*(\d+(?:\.\d+)?)",
-        query_lower,
-    )
-    if not price_match:
-        price_match = re.search(r"\$\s*(\d+(?:\.\d+)?)", query_lower)
+    price_match = None
+    price_patterns = [
+        r"\bunder\s*\$?\s*(\d+(?:\.\d+)?)",
+        r"\bbelow\s*\$?\s*(\d+(?:\.\d+)?)",
+        r"\bless than\s*\$?\s*(\d+(?:\.\d+)?)",
+        r"\bmax price\s*\$?\s*(\d+(?:\.\d+)?)",
+        r"\bmaximum price\s*\$?\s*(\d+(?:\.\d+)?)",
+        r"\bmax\s*\$?\s*(\d+(?:\.\d+)?)",
+        r"\$\s*(\d+(?:\.\d+)?)",
+    ]
+    for pattern in price_patterns:
+        price_match = re.search(pattern, query_lower)
+        if price_match:
+            break
     max_price = float(price_match.group(1)) if price_match else None
 
     size_match = re.search(
