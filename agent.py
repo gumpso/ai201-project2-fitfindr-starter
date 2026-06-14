@@ -18,6 +18,8 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
+import re
+
 from tools import search_listings, suggest_outfit, create_fit_card
 
 
@@ -92,9 +94,97 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    raw_query = (query or "").strip()
+    if not raw_query:
+        session["error"] = "Please provide a query with what item you're looking for."
+        return session
+
+    query_lower = raw_query.lower()
+
+    price_match = re.search(
+        r"(?:under|below|less than|max(?:imum)?(?: price)?)[^\d]*(\d+(?:\.\d+)?)",
+        query_lower,
+    )
+    if not price_match:
+        price_match = re.search(r"\$\s*(\d+(?:\.\d+)?)", query_lower)
+    max_price = float(price_match.group(1)) if price_match else None
+
+    size_match = re.search(
+        r"(?:size|fits like|in)\s*([a-z]{1,4}|\d{1,2}(?:\.\d+)?)\b",
+        query_lower,
+    )
+    size = size_match.group(1).upper() if size_match else None
+
+    description = raw_query
+    if price_match:
+        description = description.replace(price_match.group(0), " ")
+    if size_match:
+        description = description.replace(size_match.group(0), " ")
+    description = re.sub(r"\s+", " ", description).strip(" ,.-")
+    if not description:
+        description = raw_query
+
+    session["parsed"] = {
+        "description": description,
+        "size": size,
+        "max_price": max_price,
+    }
+
+    results = search_listings(description=description, size=size, max_price=max_price)
+    session["search_results"] = results
+
+    if not results:
+        retry_note = ""
+        if size:
+            fallback_results = search_listings(
+                description=description,
+                size=None,
+                max_price=max_price,
+            )
+            if fallback_results:
+                session["search_results"] = fallback_results
+                retry_note = " I loosened the size filter to find close matches."
+            else:
+                retry_note = " I also retried without a size filter and still found nothing."
+
+        if not session["search_results"] and max_price is not None:
+            fallback_results = search_listings(
+                description=description,
+                size=size,
+                max_price=None,
+            )
+            if fallback_results:
+                session["search_results"] = fallback_results
+                retry_note += " I removed the price limit and found alternatives."
+            else:
+                retry_note += " I retried without the price limit and still found nothing."
+
+        if not session["search_results"]:
+            session["error"] = (
+                "I couldn't find any listings matching your request."
+                f"{retry_note} Try broadening the description, size, or budget."
+            )
+            return session
+
+    session["selected_item"] = session["search_results"][0]
+
+    session["outfit_suggestion"] = suggest_outfit(
+        new_item=session["selected_item"],
+        wardrobe=session["wardrobe"],
+    )
+    if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
+        session["error"] = "I found an item but couldn't generate an outfit suggestion."
+        return session
+
+    session["fit_card"] = create_fit_card(
+        outfit=session["outfit_suggestion"],
+        new_item=session["selected_item"],
+    )
+    if not session["fit_card"] or not session["fit_card"].strip():
+        session["error"] = "I generated an outfit but couldn't create the fit card."
+
     return session
 
 

@@ -13,6 +13,7 @@ Tools:
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -69,8 +70,48 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    try:
+        listings = load_listings()
+    except Exception:
+        return []
+
+    description = (description or "").strip().lower()
+    query_terms = set(re.findall(r"[a-z0-9]+", description))
+    size_filter = (size or "").strip().lower()
+
+    scored_results: list[tuple[int, dict]] = []
+    for listing in listings:
+        listing_price = float(listing.get("price", 0))
+        if max_price is not None and listing_price > max_price:
+            continue
+
+        listing_size = str(listing.get("size", "")).lower()
+        if size_filter and size_filter not in listing_size:
+            continue
+
+        searchable_text = " ".join(
+            [
+                str(listing.get("title", "")),
+                str(listing.get("description", "")),
+                str(listing.get("category", "")),
+                str(listing.get("condition", "")),
+                str(listing.get("size", "")),
+                str(listing.get("brand", "")),
+                " ".join(listing.get("style_tags", [])),
+                " ".join(listing.get("colors", [])),
+            ]
+        ).lower()
+
+        if not query_terms:
+            score = 1
+        else:
+            score = sum(1 for term in query_terms if term in searchable_text)
+
+        if score > 0:
+            scored_results.append((score, listing))
+
+    scored_results.sort(key=lambda pair: (-pair[0], pair[1].get("price", 0)))
+    return [listing for _, listing in scored_results]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -100,8 +141,75 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    if not new_item:
+        return "Couldn't build an outfit because the selected item is missing."
+
+    item_title = new_item.get("title", "this piece")
+    item_desc = new_item.get("description", "")
+    item_colors = ", ".join(new_item.get("colors", [])) or "any colors"
+    item_tags = ", ".join(new_item.get("style_tags", [])) or "versatile style"
+
+    wardrobe_items = []
+    if isinstance(wardrobe, dict):
+        wardrobe_items = wardrobe.get("items", []) or []
+
+    if not wardrobe_items:
+        prompt = f"""
+You are a personal stylist. A user is considering: "{item_title}".
+Item details: {item_desc}
+Colors: {item_colors}
+Style tags: {item_tags}
+
+The user has no saved wardrobe yet. Give 2 practical outfit ideas as general guidance:
+- what categories to pair with this item
+- suggested colors/textures
+- shoe/accessory direction
+
+Keep it concise, friendly, and specific.
+"""
+    else:
+        formatted_wardrobe = "\n".join(
+            f"- {piece.get('name', 'Unnamed item')} "
+            f"(category: {piece.get('category', 'unknown')}, "
+            f"colors: {', '.join(piece.get('colors', [])) or 'n/a'}, "
+            f"style tags: {', '.join(piece.get('style_tags', [])) or 'n/a'})"
+            for piece in wardrobe_items
+        )
+        prompt = f"""
+You are a personal stylist. Build 1-2 complete outfits around this new thrifted item:
+New item: {item_title}
+Description: {item_desc}
+Colors: {item_colors}
+Style tags: {item_tags}
+
+User wardrobe:
+{formatted_wardrobe}
+
+Use specific pieces from the wardrobe list by name. Keep the response concise.
+"""
+
+    try:
+        client = _get_groq_client()
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
+            messages=[
+                {"role": "system", "content": "You give practical, stylish outfit suggestions."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        content = response.choices[0].message.content
+        return (content or "").strip() or "I couldn't generate an outfit suggestion this time."
+    except Exception:
+        if wardrobe_items:
+            return (
+                f"Try {item_title} with your most neutral bottoms and layer with a jacket for balance. "
+                "Finish with either chunky sneakers or boots plus one accessory for texture."
+            )
+        return (
+            f"Try pairing {item_title} with relaxed denim or tailored trousers, "
+            "then add a clean sneaker or boot and one simple accessory."
+        )
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -133,5 +241,47 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    if not outfit or not outfit.strip():
+        return "Couldn't create a fit card because no outfit suggestion was provided."
+    if not new_item:
+        return "Couldn't create a fit card because item details are missing."
+
+    title = new_item.get("title", "Thrift find")
+    price = new_item.get("price", "unknown")
+    platform = new_item.get("platform", "secondhand app")
+
+    prompt = f"""
+Write a 2-4 sentence social caption for an outfit post.
+
+Outfit plan:
+{outfit}
+
+Required details:
+- item name: {title}
+- price: ${price}
+- platform: {platform}
+
+Style rules:
+- casual, authentic OOTD vibe
+- not salesy
+- mention each required detail naturally once
+- specific style language, not generic
+"""
+
+    try:
+        client = _get_groq_client()
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            temperature=1.1,
+            messages=[
+                {"role": "system", "content": "You write short, stylish social captions."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        content = response.choices[0].message.content
+        return (content or "").strip() or "Couldn't generate a fit card right now."
+    except Exception:
+        return (
+            f"Today's thrift win: {title} for ${price} from {platform}. "
+            "Styled it with easy layers and grounded accessories for a clean, wearable vibe."
+        )

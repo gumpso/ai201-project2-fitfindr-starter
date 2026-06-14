@@ -1,6 +1,6 @@
 # FitFindr — Starter Kit
 
-This starter kit contains everything you need to begin Project 2.
+This starter kit now includes a complete baseline implementation for Project 2.
 
 ## What's Included
 
@@ -12,6 +12,9 @@ ai201-project2-fitfindr-starter/
 ├── utils/
 │   └── data_loader.py         # Helper functions for loading the data
 ├── planning.md                # Your planning template — fill this out first
+├── tools.py                   # Required tool implementations
+├── agent.py                   # Planning loop + session state orchestration
+├── app.py                     # Gradio UI wired to the agent
 └── requirements.txt           # Python dependencies
 ```
 
@@ -54,8 +57,64 @@ wardrobe = get_example_wardrobe()
 
 ## Where to Start
 
-1. **Read `planning.md` and fill it out before writing any code.**
+1. Install dependencies and set `GROQ_API_KEY` in `.env`.
 2. Verify the data loads correctly by running `python utils/data_loader.py`.
-3. Build and test each tool individually before connecting them through your planning loop.
+3. Run the CLI sanity check in `agent.py` or launch `python app.py`.
 
-Your implementation files go in this same directory. There's no required file structure for your agent code — organize it however makes sense for your design.
+## Tool Interfaces
+
+### `search_listings(description, size=None, max_price=None) -> list[dict]`
+- Loads listings from local mock data.
+- Applies optional size/price filters.
+- Scores and sorts by relevance to query keywords.
+- Returns `[]` when no match or data load failure.
+
+### `suggest_outfit(new_item, wardrobe) -> str`
+- Uses selected listing + wardrobe to generate 1–2 outfit ideas.
+- If wardrobe is empty, switches to general styling guidance.
+- If LLM call fails, returns deterministic fallback advice.
+
+### `create_fit_card(outfit, new_item) -> str`
+- Produces a short social caption for the final look.
+- Validates outfit input and returns explicit error text if missing.
+- If LLM call fails, returns deterministic fallback caption.
+
+## Planning Loop (Agent Behavior)
+
+`run_agent(query, wardrobe)` uses session-based planning:
+1. Parse `query` into `description`, `size`, `max_price`.
+2. Call `search_listings`.
+3. If empty, retry with loosened constraints (drop size, then drop price).
+4. If still empty, return early with a helpful error.
+5. Select top listing and call `suggest_outfit`.
+6. Call `create_fit_card` from outfit + selected item.
+7. Return full session dict with all intermediate and final outputs.
+
+## State Management
+
+A single session dict carries:
+- original query
+- parsed query fields
+- search results
+- selected item
+- wardrobe input
+- outfit suggestion
+- fit card
+- error (if any)
+
+This ensures outputs from one tool become inputs for the next without user re-entry.
+
+## Error Handling Strategy
+
+- **No search results:** agent retries with relaxed filters, then prompts user to broaden query.
+- **Empty wardrobe:** outfit tool returns general styling guidance.
+- **Missing outfit input:** fit card tool returns explicit error string.
+- **LLM/API failures:** outfit and fit card tools return fallback text instead of crashing.
+
+## Run
+
+```bash
+python app.py
+```
+
+Then open the local Gradio URL printed in your terminal.
